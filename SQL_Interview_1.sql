@@ -10720,3 +10720,264 @@ where days_gone <= 30
 GROUP by name)
 select count(name) from cte2
 where cnt>1;
+
+
+/*customer churn analysis*/
+create table transactions(
+order_id int,
+cust_id int,
+order_date date,
+amount int
+);
+insert into transactions values 
+(1,1,'2020-01-15',150)
+,(2,1,'2020-02-10',150)
+,(3,2,'2020-01-16',150)
+,(4,2,'2020-02-25',150)
+,(5,3,'2020-01-10',150)
+,(6,3,'2020-02-20',150)
+,(7,4,'2020-01-20',150)
+,(8,5,'2020-02-20',150)
+;
+/* self join used*/
+with cte as(
+select *, 
+coalesce( lead(order_date) over(partition by cust_id order by order_date),order_date) as next_order
+from transactions),
+cte2 as(
+select *, month(next_order) - month(order_date)  as months_gone
+from cte),
+cte3 as(
+select *, 
+case when months_gone = 1 then "retained" else "not retained" end as status
+from cte2 )
+select  c.cust_id,c.status
+from cte3 as c inner join cte3 as d
+on c.months_gone>d.months_gone
+and c.cust_id = d.cust_id
+group by 1
+union 
+select  c.cust_id,c.status
+from cte3 as c inner join cte3 as d
+on c.months_gone=d.months_gone
+and c.cust_id = d.cust_id
+group by 1;
+
+
+with cte as(
+select *, 
+coalesce( lead(order_date) over(partition by cust_id order by order_date),order_date) as next_order
+from transactions),
+cte2 as(
+select *, month(next_order) - month(order_date)  as months_gone
+from cte),
+cte3 as(
+select *, 
+case when months_gone = 1 then "retained" else "not retained" end as status
+from cte2 )
+select coalesce(month(order_date),1) as order_date, count(cust_id) from cte3
+where status = 'retained' and months_gone = 0
+union
+select month(next_order), count(cust_id) from cte3
+where status = 'retained';
+
+
+create table UserActivity
+(
+username      varchar(20) ,
+activity      varchar(20),
+startDate     Date   ,
+endDate      Date
+);
+
+insert into UserActivity values 
+('Alice','Travel','2020-02-12','2020-02-20')
+,('Alice','Dancing','2020-02-21','2020-02-23')
+,('Alice','Travel','2020-02-24','2020-02-28')
+,('Bob','Travel','2020-02-11','2020-02-18');
+
+
+/* rank */
+
+with cte as(
+select *, rank() over(partition by username order  by startdate) as act_rank
+ from UserActivity),
+ cte2 as(
+ select username, count(distinct activity) as num_act from UserActivity
+ group by 1)
+ select * from cte where act_rank = 2
+ union
+ select cte.* from cte inner join cte2 on 
+ cte.username = cte2.username
+ where num_act = 1;
+ 
+ create table billings 
+(
+emp_name varchar(10),
+bill_date date,
+bill_rate int
+);
+insert into billings values
+('Sachin','01-JAN-1990',25)
+,('Sehwag' ,'01-JAN-1989', 15)
+,('Dhoni' ,'01-JAN-1989', 20)
+,('Sachin' ,'05-Feb-1991', 30)
+;
+
+create table HoursWorked 
+(
+emp_name varchar(20),
+work_date date,
+bill_hrs int
+);
+insert into HoursWorked values
+('Sachin', '01-JUL-1990' ,3)
+,('Sachin', '01-AUG-1990', 5)
+,('Sehwag','01-JUL-1990', 2)
+,('Sachin','01-JUL-1991', 4);
+
+
+/* lead function*/
+with cte as(
+select *, coalesce(lead(dateadd(day,-1,bill_date)) over(partition by emp_name order by bill_date),dateadd(day, 999,bill_date)) as bill_end
+ from billings),
+ cte2 as(
+ select hw.work_date, hw.bill_hrs, cte.*
+ from HoursWorked hw
+  inner join cte 
+  on hw.emp_name = cte.emp_name
+  and hw.work_date BETWEEN cte.bill_date and cte.bill_end)
+  select emp_name, sum(bill_hrs*bill_rate)
+  from cte2
+  GROUP by emp_name
+  ;
+  
+  
+  /* spotify */
+  CREATE table activity
+(
+user_id varchar(20),
+event_name varchar(20),
+event_date date,
+country varchar(20)
+);
+
+insert into activity values (1,'app-installed','2022-01-01','India')
+,(1,'app-purchase','2022-01-02','India')
+,(2,'app-installed','2022-01-01','USA')
+,(3,'app-installed','2022-01-01','USA')
+,(3,'app-purchase','2022-01-03','USA')
+,(4,'app-installed','2022-01-03','India')
+,(4,'app-purchase','2022-01-03','India')
+,(5,'app-installed','2022-01-03','SL')
+,(5,'app-purchase','2022-01-03','SL')
+,(6,'app-installed','2022-01-04','Pakistan')
+,(6,'app-purchase','2022-01-04','Pakistan');
+
+select * from activity;
+select event_date, count(distinct user_id) as unique_users
+from activity
+group by 1;
+
+
+select week(event_date)+1 as week_num, count(distinct user_id) as unique_users
+from activity
+group by 1;
+
+with cte as(
+select *, 
+case when event_date = lead(event_date) over(partition by user_id) then 1 else 0 end as status
+from activity),
+cte2 as(
+select event_date, count(distinct user_id) as num_us
+from cte where status = 1
+group by 1
+union 
+select event_date, 0 as num_us
+from activity)
+select event_date, max(num_us) as num_us from cte2
+group by 1
+order by 1;
+
+with cte as(
+select country, count(user_id) as num_user from activity where event_name = 'app-purchase'
+group by 1),
+cte2 as (
+select country, num_user/(select sum(num_user) from cte) as pct from cte
+group by 1),
+cte3 as(
+select case when country not in ('India','USA') then 'others' else country end as country,
+pct from cte2)
+select country, sum(pct) as pct from cte3
+group by 1;
+
+
+with cte as(
+select *,coalesce(lead(event_date) over(partition by user_id), event_date) as next_day
+from activity),
+cte2 as(
+select *,
+datediff(next_day,event_date) as diff from cte),
+cte3 as(
+select next_day, count(distinct user_id) as num_cx
+from cte2 where diff = 1
+group by 1
+union 
+select next_day, 0 as num_cx
+from cte2)
+select next_day, max(num_cx) as num_cx
+from cte3
+group by 1
+order by 1;
+/* lag lead*/
+create table bms (seat_no int ,is_empty varchar(10));
+insert into bms values
+(1,'N')
+,(2,'Y')
+,(3,'N')
+,(4,'Y')
+,(5,'Y')
+,(6,'Y')
+,(7,'N')
+,(8,'Y')
+,(9,'Y')
+,(10,'Y')
+,(11,'Y')
+,(12,'N')
+,(13,'Y')
+,(14,'Y');
+with cte as(
+select *,
+case when is_empty = "Y" and lead(is_empty,1) over() = "Y" and lead(is_empty, 2) over() = "Y" then 1 else 0 end as status
+ from bms)
+ select seat_no as first_seat,seat_no+1 as sec_seat, seat_no+2 as third_seat from cte where status = 1;
+ 
+ CREATE TABLE STORES (
+Store varchar(10),
+Quarter varchar(10),
+Amount int);
+
+INSERT INTO STORES (Store, Quarter, Amount)
+VALUES ('S1', 'Q1', 200),
+('S1', 'Q2', 300),
+('S1', 'Q4', 400),
+('S2', 'Q1', 500),
+('S2', 'Q3', 600),
+('S2', 'Q4', 700),
+('S3', 'Q1', 800),
+('S3', 'Q2', 750),
+('S3', 'Q3', 900);
+
+with recursive cte as(
+select Store, right(Quarter,1) as q_num
+from STORES
+union
+select Store, q_num+1 as q_num from cte
+where q_num <= 3),
+cte2 as(
+select c.*,s.quarter as m_q from cte c
+left join stores s
+on c.Store = s.Store and c.q_num = right(s.Quarter,1)
+order by 1,2)
+select Store, concat('Q',q_num) as q from cte2
+where m_q is null;
